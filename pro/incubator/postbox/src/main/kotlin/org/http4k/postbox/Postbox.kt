@@ -33,6 +33,7 @@ interface Postbox {
      *
      * @return the status of the request processing
      *  - If the request is new or has not been processed, the status will be [RequestProcessingStatus.Pending]
+     *  - If the request is currently being processed, the status will be [RequestProcessingStatus.Processing]
      *  - If the request has been processed, the status will be [RequestProcessingStatus.Processed]
      *  - If the request has been marked as dead, the status will be [RequestProcessingStatus.Dead]
      */
@@ -54,6 +55,8 @@ interface Postbox {
     /**
      * Mark a request as processed with the given response.
      *
+     * The stored response is always replaced with the provided one.
+     *
      * @return
      *  - If the request was successfully marked as processed, the result will be a success with [Unit]
      *  - If the request has been already processed or marked as dead, the result will be a failure with [PostboxError.StorageFailure]
@@ -68,7 +71,8 @@ interface Postbox {
      * @param delayReprocessing the delay before reprocessing the request
      * @param response the response to store with the failed request (optional)
      *
-     * If a response is provided, it overrides any previously stored one.
+     * The stored response is replaced with the provided one. If no response is provided, any previously stored
+     * response is cleared.
      *
      * @return
      *  - If the request was successfully marked as failed, the result will be a success with [Unit]
@@ -83,7 +87,9 @@ interface Postbox {
      * @param requestId the id of the request to mark as dead
      * @param response the response to store with the dead request (optional)
      *
-     * If a response was not previously stored, the new response will be stored. Subsequent responses will be ignored.
+     * For a pending or processing request, the stored response is replaced with the provided one (or cleared if none
+     * is provided). For a request that has already been marked as dead, the first stored response is retained, and a
+     * missing response is filled with the provided one. Subsequent responses will be ignored.
      *
      * @return
      *   - If the request was successfully marked as dead, returns a success with [Unit]
