@@ -44,8 +44,12 @@ class InMemoryPostbox(val timeSource: TimeSource) : Postbox {
                 Success(RequestProcessingStatus.Pending(0, now))
             } else {
                 when (existingRequest.status) {
-                    PENDING, PROCESSING -> Success(
+                    PENDING -> Success(
                         RequestProcessingStatus.Pending(existingRequest.failures, existingRequest.processAt)
+                    )
+
+                    PROCESSING -> Success(
+                        RequestProcessingStatus.Processing(existingRequest.failures, existingRequest.processAt)
                     )
 
                     PROCESSED -> Success(RequestProcessingStatus.Processed(existingRequest.response!!))
@@ -71,7 +75,7 @@ class InMemoryPostbox(val timeSource: TimeSource) : Postbox {
         findRequest(requestId)?.let {
             when (it.status) {
                 PENDING, PROCESSING -> {
-                    requests[requestId] = Record(it.processAt, it.request, it.response ?: response, PROCESSED)
+                    requests[requestId] = Record(it.processAt, it.request, response, PROCESSED)
                     Success(Unit)
                 }
 
@@ -93,7 +97,7 @@ class InMemoryPostbox(val timeSource: TimeSource) : Postbox {
                     requests[requestId] = Record(
                         it.processAt + delayReprocessing,
                         it.request,
-                        response ?: it.response,
+                        response,
                         failures = it.failures + 1
                     )
                     Success(Unit)
@@ -103,7 +107,7 @@ class InMemoryPostbox(val timeSource: TimeSource) : Postbox {
                     requests[requestId] = Record(
                         timeSource() + delayReprocessing,
                         it.request,
-                        if (response != null) response else it.response,
+                        response,
                         failures = it.failures + 1
                     )
                     Success(Unit)
@@ -120,7 +124,7 @@ class InMemoryPostbox(val timeSource: TimeSource) : Postbox {
         findRequest(requestId)?.let {
             when (it.status) {
                 PENDING, PROCESSING -> {
-                    requests[requestId] = Record(it.processAt, it.request, it.response ?: response, DEAD)
+                    requests[requestId] = Record(it.processAt, it.request, response, DEAD)
                     Success(Unit)
                 }
 

@@ -16,6 +16,7 @@ import org.http4k.core.Response
 import org.http4k.core.Status.Companion.BAD_REQUEST
 import org.http4k.core.Status.Companion.CONTINUE
 import org.http4k.core.Status.Companion.I_M_A_TEAPOT
+import org.http4k.core.Status.Companion.OK
 import org.http4k.postbox.Postbox.PendingRequest
 import org.http4k.postbox.PostboxError
 import org.http4k.postbox.PostboxError.Companion.RequestAlreadyProcessed
@@ -287,7 +288,6 @@ abstract class PostboxContract {
 
     @Test
     fun `claim honours batch size and returns fifo order`() {
-        val now = timeSource()
         val r1 = id(1)
         val r2 = id(2)
         val r3 = id(3)
@@ -349,6 +349,79 @@ abstract class PostboxContract {
         markFailed(requestId, Duration.ofSeconds(5), Response(BAD_REQUEST))
 
         checkStatus(requestId, Success(Pending(2, now + Duration.ofSeconds(10))))
+    }
+
+    @Test
+    fun `markProcessed overrides a previously stored failure response`() {
+        store(requestId, request)
+        markFailed(requestId, Duration.ofSeconds(5), Response(I_M_A_TEAPOT))
+
+        markProcessed(requestId, Response(OK))
+
+        checkStatus(requestId, Success(Processed(Response(OK))))
+        checkPending()
+    }
+
+    @Test
+    fun `a request eventually processed exposes the successful response after retries`() {
+        val lease = Duration.ofSeconds(30)
+        store(requestId, request)
+
+        markFailed(requestId, Duration.ofSeconds(5), Response(I_M_A_TEAPOT))
+
+        timeSource.tick(Duration.ofSeconds(6))
+
+        val reclaimed = claim(10, timeSource(), lease)
+        assertThat(reclaimed, equalTo(listOf(PendingRequest(requestId, request, timeSource() + lease, 1))))
+
+        markProcessed(requestId, Response(OK))
+
+        checkStatus(requestId, Success(Processed(Response(OK))))
+    }
+
+    @Test
+    fun `markDead on a pending request overrides a previously stored failure response`() {
+        store(requestId, request)
+        markFailed(requestId, Duration.ofSeconds(5), Response(I_M_A_TEAPOT))
+
+        markDead(requestId, Response(BAD_REQUEST))
+
+        checkStatus(requestId, Success(Dead(Response(BAD_REQUEST))))
+        checkPending()
+    }
+
+    @Test
+    fun `markDead on a pending request with no response clears a previously stored failure response`() {
+        store(requestId, request)
+        markFailed(requestId, Duration.ofSeconds(5), Response(I_M_A_TEAPOT))
+
+        markDead(requestId)
+
+        checkStatus(requestId, Success(Dead()))
+        checkPending()
+    }
+
+    @Test
+    fun `markFailed with no response clears a previously stored failure response`() {
+        store(requestId, request)
+        markFailed(requestId, Duration.ofSeconds(5), Response(I_M_A_TEAPOT))
+
+        markFailed(requestId, Duration.ofSeconds(5))
+
+        markDead(requestId)
+
+        checkStatus(requestId, Success(Dead()))
+    }
+
+    @Test
+    fun `re-storing a request that is being processed reports it as processing`() {
+        val now = timeSource()
+        val lease = Duration.ofSeconds(30)
+        store(requestId, request)
+
+        claim(10, now, lease)
+
+        store(requestId, request, Success(RequestProcessingStatus.Processing(0, now + lease)))
     }
 
     private fun claim(
