@@ -21,6 +21,9 @@ import org.http4k.postbox.processing.ProcessingEvent.RequestMarkedDead
 import org.http4k.postbox.processing.ProcessingEvent.RequestProcessingFailed
 import org.http4k.postbox.processing.ProcessingEvent.RequestProcessingSucceeded
 import org.http4k.postbox.processing.ProcessingEvent.RequestScheduledForRetry
+import org.http4k.postbox.processing.RequestProcessingFailureReason.FAILED_TO_MARK_DEAD
+import org.http4k.postbox.processing.RequestProcessingFailureReason.FAILED_TO_MARK_PROCESSED
+import org.http4k.postbox.processing.RequestProcessingFailureReason.FAILED_TO_SCHEDULE_RETRY
 import java.time.Duration
 import kotlin.math.pow
 
@@ -88,7 +91,7 @@ class PostboxProcessing(
         postbox.markProcessed(pending.requestId, response)
             .peek { events(RequestProcessingSucceeded(pending.requestId)) }
             .peekFailure {
-                events(RequestProcessingFailed(pending.requestId, "failed to mark request as processed: ${it.description}"))
+                events(RequestProcessingFailed(pending.requestId, FAILED_TO_MARK_PROCESSED, it.description))
             }
     }
 
@@ -104,7 +107,7 @@ class PostboxProcessing(
                 )
             }
             .peekFailure {
-                events(RequestProcessingFailed(pending.requestId, "failed to mark request as dead: ${it.description}"))
+                events(RequestProcessingFailed(pending.requestId, FAILED_TO_MARK_DEAD, it.description))
             }
     }
 
@@ -113,7 +116,7 @@ class PostboxProcessing(
         postbox.markFailed(pending.requestId, delay, response)
             .peek { events(RequestScheduledForRetry(pending.requestId, pending.failures + 1, delay)) }
             .peekFailure {
-                events(RequestProcessingFailed(pending.requestId, "failed to mark request as failed for retry: ${it.description}"))
+                events(RequestProcessingFailed(pending.requestId, FAILED_TO_SCHEDULE_RETRY, it.description))
             }
     }
 

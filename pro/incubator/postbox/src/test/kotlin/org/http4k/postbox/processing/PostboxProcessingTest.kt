@@ -207,7 +207,7 @@ class PostboxProcessingTest {
 
         processor.processPendingRequests { it.status.successful }
 
-        assertThat(events.single(), equalTo(RequestProcessingFailed(requestId, "failed to mark request as processed: storage failed (cause: request already marked as dead)")))
+        assertThat(events.single(), equalTo(RequestProcessingFailed(requestId, RequestProcessingFailureReason.FAILED_TO_MARK_PROCESSED, "storage failed (cause: request already marked as dead)")))
     }
 
     private fun processOnce(requestId: RequestId, events: MutableList<Event>) {
