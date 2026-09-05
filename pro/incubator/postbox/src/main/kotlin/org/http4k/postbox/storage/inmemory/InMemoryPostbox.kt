@@ -27,39 +27,28 @@ class InMemoryPostbox(val timeSource: TimeSource) : Postbox {
     private val requests = mutableMapOf<RequestId, Record>()
     private val lock = Any()
 
-    private var fail = false
-
-    fun failNext() {
-        fail = true
-    }
-
     private fun findRequest(requestId: RequestId) = requests[requestId]
 
     override fun store(requestId: RequestId, request: Request): Result<RequestProcessingStatus, PostboxError> = synchronized(lock) {
-        if (!fail) {
-            val now = timeSource()
-            val existingRequest = findRequest(requestId)
-            if (existingRequest == null) {
-                requests[requestId] = Record(now, request)
-                Success(RequestProcessingStatus.Pending(0, now))
-            } else {
-                when (existingRequest.status) {
-                    PENDING -> Success(
-                        RequestProcessingStatus.Pending(existingRequest.failures, existingRequest.processAt)
-                    )
-
-                    PROCESSING -> Success(
-                        RequestProcessingStatus.Processing(existingRequest.failures, existingRequest.processAt)
-                    )
-
-                    PROCESSED -> Success(RequestProcessingStatus.Processed(existingRequest.response!!))
-
-                    DEAD -> Success(RequestProcessingStatus.Dead(existingRequest.response))
-                }
-            }
+        val now = timeSource()
+        val existingRequest = findRequest(requestId)
+        if (existingRequest == null) {
+            requests[requestId] = Record(now, request)
+            Success(RequestProcessingStatus.Pending(0, now))
         } else {
-            fail = false
-            Failure(PostboxError.StorageFailure(IllegalStateException("Failed to store request")))
+            when (existingRequest.status) {
+                PENDING -> Success(
+                    RequestProcessingStatus.Pending(existingRequest.failures, existingRequest.processAt)
+                )
+
+                PROCESSING -> Success(
+                    RequestProcessingStatus.Processing(existingRequest.failures, existingRequest.processAt)
+                )
+
+                PROCESSED -> Success(RequestProcessingStatus.Processed(existingRequest.response!!))
+
+                DEAD -> Success(RequestProcessingStatus.Dead(existingRequest.response))
+            }
         }
     }
 
