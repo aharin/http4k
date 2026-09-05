@@ -8,8 +8,11 @@ import dev.forkhandles.result4k.Failure
 import dev.forkhandles.result4k.Result
 import dev.forkhandles.result4k.Success
 import dev.forkhandles.tx.Transactional
-import dev.forkhandles.values.NonEmptyStringValueFactory
 import dev.forkhandles.values.StringValue
+import dev.forkhandles.values.StringValueFactory
+import dev.forkhandles.values.and
+import dev.forkhandles.values.maxLength
+import dev.forkhandles.values.minLength
 import org.http4k.core.Request
 import org.http4k.core.Response
 import org.http4k.lens.Path
@@ -146,8 +149,13 @@ sealed class RequestProcessingStatus {
 }
 
 class RequestId private constructor(value: String) : StringValue(value) {
-    companion object : NonEmptyStringValueFactory<RequestId>(::RequestId) {
-        val lens = Path.map(::RequestId).of("requestId").asResult()
+    companion object : StringValueFactory<RequestId>(
+        ::RequestId,
+        1.minLength.and(64.maxLength),
+        { it }
+    ) {
+        const val MAX_LENGTH = 64
+        val lens = Path.map(RequestId::of).of("requestId").asResult()
     }
 }
 

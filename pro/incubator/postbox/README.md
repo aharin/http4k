@@ -74,6 +74,8 @@ The currently supported transactors are:
 
 Idempotency for the Postbox is achieved by having a deterministic `requestId` for each received request.
 
+Request ids must be unique and are limited to 64 characters.
+
 Out-of-the-box options are:
 
 * Header - uses a header value to identify the request

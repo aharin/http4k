@@ -4,6 +4,7 @@
  */
 package org.http4k.postbox.storage.jdbc
 
+import org.http4k.postbox.RequestId
 import javax.sql.DataSource
 
 object JdbcPostboxSchema {
@@ -19,7 +20,7 @@ object JdbcPostboxSchema {
 
     private fun createTableSql(prefix: String) = """
         CREATE TABLE IF NOT EXISTS ${prefix}_postbox (
-            request_id  VARCHAR(36)  NOT NULL,
+            request_id  VARCHAR(${RequestId.MAX_LENGTH})  NOT NULL,
             request     TEXT         NOT NULL,
             response    TEXT,
             created_at  TIMESTAMP    NOT NULL,
