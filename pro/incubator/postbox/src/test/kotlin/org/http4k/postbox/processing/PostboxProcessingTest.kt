@@ -15,6 +15,7 @@ import org.http4k.core.Response
 import org.http4k.core.Status.Companion.BAD_GATEWAY
 import org.http4k.core.Status.Companion.OK
 import org.http4k.core.Status.Companion.UNPROCESSABLE_ENTITY
+import org.http4k.events.Event
 import org.http4k.events.StdOutEvents
 import org.http4k.postbox.Postbox
 import org.http4k.postbox.RequestId
@@ -22,6 +23,10 @@ import org.http4k.postbox.RequestProcessingStatus
 import org.http4k.postbox.RequestProcessingStatus.Pending
 import org.http4k.postbox.RequestProcessingStatus.Processed
 import org.http4k.postbox.processing.PostboxProcessing.Companion.defaultBackoffStrategy
+import org.http4k.postbox.processing.ProcessingEvent.RequestMarkedDead
+import org.http4k.postbox.processing.ProcessingEvent.RequestProcessingFailed
+import org.http4k.postbox.processing.ProcessingEvent.RequestProcessingSucceeded
+import org.http4k.postbox.processing.ProcessingEvent.RequestScheduledForRetry
 import org.http4k.postbox.storage.inmemory.InMemoryPostbox
 import org.http4k.routing.bind
 import org.http4k.routing.routes
@@ -139,6 +144,79 @@ class PostboxProcessingTest {
         assertThat(defaultBackoffStrategy(3, randomSource), equalTo(ofSeconds(47)))
         assertThat(defaultBackoffStrategy(4, randomSource), equalTo(ofSeconds(87)))
         assertThat(defaultBackoffStrategy(5, randomSource), equalTo(ofSeconds(167)))
+    }
+
+    @Test
+    fun `emits RequestProcessingSucceeded when a request is processed`() {
+        val requestId = RequestId.of("0")
+        store(requestId, requestForSuccess)
+        val events = mutableListOf<Event>()
+
+        processOnce(requestId, events)
+
+        assertThat(
+            events,
+            equalTo(listOf<ProcessingEvent>(RequestProcessingSucceeded(requestId)))
+        )
+    }
+
+    @Test
+    fun `emits RequestScheduledForRetry (not a failure event) when a request does not pass success criteria`() {
+        val requestId = RequestId.of("0")
+        store(requestId, requestForFailure)
+        val events = mutableListOf<Event>()
+
+        processOnce(requestId, events)
+
+        assertThat(events, equalTo(listOf<ProcessingEvent>(RequestScheduledForRetry(requestId, 1, reprocessingDelay))))
+    }
+
+    @Test
+    fun `emits RequestMarkedDead (not a failure event) when a request exceeds maxFailures`() {
+        val requestId = RequestId.of("0")
+        store(requestId, requestForFailure)
+        val events = mutableListOf<Event>()
+        val processor = PostboxProcessing(transactor,
+            testTarget,
+            context = TestExecutionContext(timeSource, 4),
+            events = { events += it },
+            maxFailures = 3,
+            backoffStrategy = { _, _ -> reprocessingDelay })
+
+        processor.start()
+
+        assertThat(
+            events.filterIsInstance<RequestMarkedDead>(),
+            equalTo(listOf(RequestMarkedDead(requestId, 4, "did not pass success criteria after exceeding maxFailures of 3")))
+        )
+        assertThat(events.filterIsInstance<RequestProcessingFailed>(), equalTo(emptyList<RequestProcessingFailed>()))
+    }
+
+    @Test
+    fun `emits RequestProcessingFailed when a request cannot be finalised as processed`() {
+        val requestId = RequestId.of("0")
+        store(requestId, requestForSuccess)
+        val events = mutableListOf<Event>()
+        val processor = PostboxProcessing(transactor,
+            { request ->
+                postbox.markDead(requestId, Response(BAD_GATEWAY))
+                Response(OK)
+            },
+            events = { events += it },
+            backoffStrategy = { _, _ -> reprocessingDelay })
+
+        processor.processPendingRequests { it.status.successful }
+
+        assertThat(events.single(), equalTo(RequestProcessingFailed(requestId, "failed to mark request as processed: storage failed (cause: request already marked as dead)")))
+    }
+
+    private fun processOnce(requestId: RequestId, events: MutableList<Event>) {
+        val processor = PostboxProcessing(transactor,
+            testTarget,
+            context = TestExecutionContext(timeSource, 1),
+            events = { events += it },
+            backoffStrategy = { _, _ -> reprocessingDelay })
+        processor.processPendingRequests { it.status.successful }
     }
 
     private fun checkStatus(requestId: RequestId, processed: RequestProcessingStatus) {

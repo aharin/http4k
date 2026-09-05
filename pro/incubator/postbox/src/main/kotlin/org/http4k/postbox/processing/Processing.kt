@@ -4,10 +4,7 @@
  */
 package org.http4k.postbox.processing
 
-import dev.forkhandles.result4k.Failure
 import dev.forkhandles.result4k.Result
-import dev.forkhandles.result4k.flatMap
-import dev.forkhandles.result4k.get
 import dev.forkhandles.result4k.mapFailure
 import dev.forkhandles.result4k.peek
 import dev.forkhandles.result4k.peekFailure
@@ -20,11 +17,12 @@ import org.http4k.postbox.performAsResult
 import org.http4k.postbox.processing.ProcessingEvent.BatchProcessingFailed
 import org.http4k.postbox.processing.ProcessingEvent.BatchProcessingSucceeded
 import org.http4k.postbox.processing.ProcessingEvent.PollWait
+import org.http4k.postbox.processing.ProcessingEvent.RequestMarkedDead
 import org.http4k.postbox.processing.ProcessingEvent.RequestProcessingFailed
 import org.http4k.postbox.processing.ProcessingEvent.RequestProcessingSucceeded
+import org.http4k.postbox.processing.ProcessingEvent.RequestScheduledForRetry
 import java.time.Duration
 import kotlin.math.pow
-import kotlin.time.toKotlinDuration
 
 /**
  * PostboxProcessing is a background process that polls the Postbox for pending requests and processes them.
@@ -70,43 +68,53 @@ class PostboxProcessing(
     fun processPendingRequests(successCriteria: (Response) -> Boolean): Result<Int, RequestProcessingError> =
         transactor.performAsResult { postbox ->
             val claimed = postbox.claim(batchSize, context.currentTime(), lease)
-            for (pending in claimed) {
-                processPendingRequest(postbox, pending, successCriteria)
-                    .peek { events(RequestProcessingSucceeded(pending.requestId)) }
-                    .peekFailure { events(RequestProcessingFailed(it.reason)) }
-            }
+            claimed.forEach { pending -> processPendingRequest(postbox, pending, successCriteria) }
             claimed.size
         }.mapFailure { RequestProcessingError(it.message.orEmpty()) }
 
     private fun processPendingRequest(
         postbox: Postbox, pending: Postbox.PendingRequest,
         successCriteria: (Response) -> Boolean
-    ): Result<Unit, RequestProcessingError> = target(pending.request).let { response ->
-        if (successCriteria(response)) {
-            postbox.markProcessed(pending.requestId, response)
-                .mapFailure { RequestProcessingError(it.description) }
-        } else {
-            if (pending.failures >= maxFailures) {
-                postbox.markDead(pending.requestId, response)
-                    .mapFailure { RequestProcessingError(it.description) }
-                    .flatMap { Failure(RequestProcessingError("${pending.requestId} did not pass success criteria after ${pending.failures} attempts. Marked as dead")) }
-                    .get().let(::Failure)
-            } else {
-                val delay = backoffStrategy(pending.failures, { (0..it).random() })
-                postbox.markFailed(pending.requestId, delay, response)
-                    .mapFailure { RequestProcessingError(it.description) }
-                    .flatMap {
-                        Failure(
-                            RequestProcessingError(
-                                "${pending.requestId} did not pass success criteria. Marked as failed (failure #${pending.failures + 1}, reprocessing in ${
-                                    delay.toKotlinDuration()
-                                })"
-                            )
-                        )
-                    }
-                    .get().let(::Failure)
-            }
+    ) {
+        val response = target(pending.request)
+        when {
+            successCriteria(response) -> finaliseProcessed(postbox, pending, response)
+            pending.failures >= maxFailures -> finaliseDead(postbox, pending, response)
+            else -> finaliseForRetry(postbox, pending, response)
         }
+    }
+
+    private fun finaliseProcessed(postbox: Postbox, pending: Postbox.PendingRequest, response: Response) {
+        postbox.markProcessed(pending.requestId, response)
+            .peek { events(RequestProcessingSucceeded(pending.requestId)) }
+            .peekFailure {
+                events(RequestProcessingFailed(pending.requestId, "failed to mark request as processed: ${it.description}"))
+            }
+    }
+
+    private fun finaliseDead(postbox: Postbox, pending: Postbox.PendingRequest, response: Response) {
+        postbox.markDead(pending.requestId, response)
+            .peek {
+                events(
+                    RequestMarkedDead(
+                        pending.requestId,
+                        pending.failures + 1,
+                        "did not pass success criteria after exceeding maxFailures of $maxFailures"
+                    )
+                )
+            }
+            .peekFailure {
+                events(RequestProcessingFailed(pending.requestId, "failed to mark request as dead: ${it.description}"))
+            }
+    }
+
+    private fun finaliseForRetry(postbox: Postbox, pending: Postbox.PendingRequest, response: Response) {
+        val delay = backoffStrategy(pending.failures, { (0..it).random() })
+        postbox.markFailed(pending.requestId, delay, response)
+            .peek { events(RequestScheduledForRetry(pending.requestId, pending.failures + 1, delay)) }
+            .peekFailure {
+                events(RequestProcessingFailed(pending.requestId, "failed to mark request as failed for retry: ${it.description}"))
+            }
     }
 
     companion object {
