@@ -133,15 +133,18 @@ The responses for those requests are stored so they can be consumed or served la
 
 By default, a request will be marked as processed if the handler returns a `2xx` status code. Otherwise, it'll be marked as failed and reprocessed later using an incremental backoff strategy. If it exceeds the maximum retry attempts, the request is marked as "dead" and won't be reprocessed. 
 
+To avoid multiple instances of `PostboxProcessing` processing the same request, each batch of pending requests is claimed before being processed. A claimed request is marked as being processed for the duration of a lease; if the request isn't finalised within that lease (for instance because the processor crashed), it will be reclaimed and reprocessed by another or subsequent run.
+
 You can configure `PostboxProcessing` by providing the following options:
 
 | Option | Description                                                                               | Default                                             |
 |--------|-------------------------------------------------------------------------------------------|-----------------------------------------------------|
 | `batchSize` | The number of requests to process in a single batch                                       | 10                                                  |
+| `lease` | The duration for which a claimed request is reserved before it can be reclaimed by another processor | 30 seconds                                |
 | `maxPollingTime` | The maximum time to wait between polling requests                                         | 5 seconds                                           |
 | `successCriteria` | A `(Response) -> Boolean` function to determine if the request was processed successfully | `response.status.successful` (i.e. status code 2xx) |
 | `maxFailures` | The maximum number of failures before marking the request as "dead"                       | 3                                                   |
-| `backoffStrategy` | A function to calculate the delay before trying to reprocess a request again              | (((# failures) ^ 2) * 5 seconds) + random(10) seconds |
+| `backoffStrategy` | A function to calculate the delay before trying to reprocess a request again              | (2 ^ (# failures)) * 5 seconds + random(10) seconds |
 
 
 ### Configuring response for pending requests

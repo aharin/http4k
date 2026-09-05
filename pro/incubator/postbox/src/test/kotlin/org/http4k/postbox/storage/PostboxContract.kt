@@ -248,6 +248,118 @@ abstract class PostboxContract {
         checkPending(PendingRequest(requestId, request, expectedProcessTime, 3), atTime = expectedProcessTime + Duration.ofSeconds(1))
     }
 
+    @Test
+    fun `claim a single due request and mark it as processing`() {
+        val now = timeSource()
+        store(requestId, request)
+
+        val claimed = claim(10, now, Duration.ofSeconds(30))
+
+        assertThat(claimed, equalTo(listOf(PendingRequest(requestId, request, now + Duration.ofSeconds(30), 0))))
+        checkStatus(requestId, Success(RequestProcessingStatus.Processing(0, now + Duration.ofSeconds(30))))
+        checkPending()
+    }
+
+    @Test
+    fun `claimed requests are exclusive and not returned again until lease expires`() {
+        val now = timeSource()
+        store(requestId, request)
+
+        claim(10, now, Duration.ofSeconds(30))
+
+        assertThat(claim(10, now, Duration.ofSeconds(30)), equalTo(emptyList<PendingRequest>()))
+    }
+
+    @Test
+    fun `claimed request is reclaimed after lease expiry`() {
+        val now = timeSource()
+        val lease = Duration.ofSeconds(30)
+        store(requestId, request)
+
+        claim(10, now, lease)
+
+        val afterLease = now + lease + Duration.ofSeconds(1)
+        val reclaimed = claim(10, afterLease, lease)
+
+        assertThat(reclaimed, equalTo(listOf(PendingRequest(requestId, request, afterLease + lease, 0))))
+        checkStatus(requestId, Success(RequestProcessingStatus.Processing(0, afterLease + lease)))
+    }
+
+    @Test
+    fun `claim honours batch size and returns fifo order`() {
+        val now = timeSource()
+        val r1 = id(1)
+        val r2 = id(2)
+        val r3 = id(3)
+        store(r1, Request(GET, "/1"))
+        timeSource.tick(tick)
+        store(r2, Request(GET, "/2"))
+        timeSource.tick(tick)
+        store(r3, Request(GET, "/3"))
+        val after = timeSource()
+        val lease = Duration.ofSeconds(30)
+
+        val claimed = claim(2, after, lease)
+
+        assertThat(claimed, equalTo(listOf(
+            PendingRequest(r1, Request(GET, "/1"), after + lease, 0),
+            PendingRequest(r2, Request(GET, "/2"), after + lease, 0)
+        )))
+        checkStatus(r1, Success(RequestProcessingStatus.Processing(0, after + lease)))
+        checkStatus(r2, Success(RequestProcessingStatus.Processing(0, after + lease)))
+        checkStatus(r3, Success(Pending(0, after)))
+    }
+
+    @Test
+    fun `can mark a claimed request as processed`() {
+        val now = timeSource()
+        store(requestId, request)
+        claim(10, now, Duration.ofSeconds(30))
+
+        markProcessed(requestId, Response(I_M_A_TEAPOT))
+
+        checkStatus(requestId, Success(Processed(Response(I_M_A_TEAPOT))))
+        checkPending()
+    }
+
+    @Test
+    fun `cannot store a new request over an existing dead request`() {
+        store(requestId, request)
+        markDead(requestId, Response(BAD_REQUEST))
+
+        store(requestId, Request(GET, "/other"), Success(Dead(Response(BAD_REQUEST))))
+        checkPending()
+    }
+
+    @Test
+    fun `cannot store a new request over an existing processed request`() {
+        store(requestId, request)
+        markProcessed(requestId, Response(I_M_A_TEAPOT))
+
+        store(requestId, Request(GET, "/other"), Success(Processed(Response(I_M_A_TEAPOT))))
+        checkPending()
+    }
+
+    @Test
+    fun `markFailed always overwrites the stored response`() {
+        val now = timeSource()
+        store(requestId, request)
+
+        markFailed(requestId, Duration.ofSeconds(5), Response(I_M_A_TEAPOT))
+        markFailed(requestId, Duration.ofSeconds(5), Response(BAD_REQUEST))
+
+        checkStatus(requestId, Success(Pending(2, now + Duration.ofSeconds(10))))
+    }
+
+    private fun claim(
+        batchSize: Int,
+        atTime: Instant,
+        lease: Duration
+    ): List<PendingRequest> {
+        val result = postbox.perform { it.claim(batchSize, atTime, lease) }
+        return result
+    }
+
     private fun markFailed(
         requestId: RequestId,
         delay: Duration,

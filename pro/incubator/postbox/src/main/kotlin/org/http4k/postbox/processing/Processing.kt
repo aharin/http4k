@@ -35,6 +35,7 @@ class PostboxProcessing(
     private val batchSize: Int = 10,
     private val maxFailures: Int = 3,
     private val maxPollingTime: Duration = Duration.ofSeconds(5),
+    private val lease: Duration = Duration.ofSeconds(30),
     private val events: Events = { },
     private val context: ExecutionContext = DefaultExecutionContext,
     private val backoffStrategy: BackoffStrategy = ::defaultBackoffStrategy,
@@ -68,14 +69,13 @@ class PostboxProcessing(
 
     fun processPendingRequests(successCriteria: (Response) -> Boolean): Result<Int, RequestProcessingError> =
         transactor.performAsResult { postbox ->
-            // TODO: mark requests as "processing" to allow for multiple instances of this function to run concurrently
-            val pendingRequests = postbox.pendingRequests(batchSize, context.currentTime())
-            for (pending in pendingRequests) {
+            val claimed = postbox.claim(batchSize, context.currentTime(), lease)
+            for (pending in claimed) {
                 processPendingRequest(postbox, pending, successCriteria)
                     .peek { events(RequestProcessingSucceeded(pending.requestId)) }
                     .peekFailure { events(RequestProcessingFailed(it.reason)) }
             }
-            pendingRequests.size
+            claimed.size
         }.mapFailure { RequestProcessingError(it.message.orEmpty()) }
 
     private fun processPendingRequest(

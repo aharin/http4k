@@ -100,6 +100,37 @@ class PostboxProcessingTest {
     }
 
     @Test
+    fun `a request claimed by another processor is not re-processed`() {
+        val requestId = RequestId.of("0")
+
+        store(requestId, requestForSuccess)
+
+        val lease = ofSeconds(30)
+        postbox.claim(10, timeSource(), lease)
+
+        transactor.perform { it.markProcessed(requestId, Response(OK)) }
+
+        checkPendingRequest(emptyList())
+        checkStatus(requestId, Processed(Response(OK)))
+    }
+
+    @Test
+    fun `a request is reclaimed and reprocessed after its lease expires`() {
+        val requestId = RequestId.of("0")
+        val lease = ofSeconds(30)
+
+        store(requestId, requestForFailure)
+
+        postbox.claim(10, timeSource(), lease)
+
+        timeSource.tick(ofSeconds(31))
+
+        val reclaimed = postbox.claim(10, timeSource(), lease)
+
+        assertThat(reclaimed, equalTo(listOf(Postbox.PendingRequest(requestId, requestForFailure, timeSource() + lease, 0))))
+    }
+
+    @Test
     fun `default backoff strategy`() {
         val randomSource: RandomSource = { 7 }
         assertThat(defaultBackoffStrategy(0, randomSource), equalTo(ofSeconds(12)))

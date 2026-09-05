@@ -12,6 +12,7 @@ object JdbcPostboxSchema {
         dataSource.connection.use { conn ->
             conn.createStatement().use { stmt ->
                 stmt.execute(createTableSql(prefix))
+                stmt.execute(createIndexSql(prefix))
             }
         }
     }
@@ -27,5 +28,10 @@ object JdbcPostboxSchema {
             status      VARCHAR(10)  NOT NULL DEFAULT 'PENDING',
             CONSTRAINT ${prefix}_request_id_pk PRIMARY KEY (request_id)
         )
+    """.trimIndent()
+
+    private fun createIndexSql(prefix: String) = """
+        CREATE INDEX IF NOT EXISTS ${prefix}_postbox_status_process_at
+        ON ${prefix}_postbox (status, process_at)
     """.trimIndent()
 }
