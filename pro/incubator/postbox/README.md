@@ -144,6 +144,7 @@ You can configure `PostboxProcessing` by providing the following options:
 | `batchSize` | The number of requests to process in a single batch                                       | 10                                                  |
 | `lease` | The duration for which a claimed request is reserved before it can be reclaimed by another processor | 30 seconds                                |
 | `maxPollingTime` | The maximum time to wait between polling requests                                         | 5 seconds                                           |
+| `shutdownGracePeriod` | How long `stop()` waits for in-flight work to finish before returning. If it elapses with work still in flight, a `ShutdownTimedOut` event is emitted | 30 seconds |
 | `successCriteria` | A `(Response) -> Boolean` function to determine if the request was processed successfully | `response.status.successful` (i.e. status code 2xx) |
 | `maxFailures` | The maximum number of failures before marking the request as "dead"                       | 3                                                   |
 | `backoffStrategy` | A function to calculate the delay before trying to reprocess a request again              | (2 ^ (# failures)) * 5 seconds + random(10) seconds |

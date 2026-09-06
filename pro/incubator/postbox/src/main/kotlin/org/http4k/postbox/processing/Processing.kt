@@ -21,10 +21,12 @@ import org.http4k.postbox.processing.ProcessingEvent.RequestMarkedDead
 import org.http4k.postbox.processing.ProcessingEvent.RequestProcessingFailed
 import org.http4k.postbox.processing.ProcessingEvent.RequestProcessingSucceeded
 import org.http4k.postbox.processing.ProcessingEvent.RequestScheduledForRetry
+import org.http4k.postbox.processing.ProcessingEvent.ShutdownTimedOut
 import org.http4k.postbox.processing.RequestProcessingFailureReason.FAILED_TO_MARK_DEAD
 import org.http4k.postbox.processing.RequestProcessingFailureReason.FAILED_TO_MARK_PROCESSED
 import org.http4k.postbox.processing.RequestProcessingFailureReason.FAILED_TO_SCHEDULE_RETRY
 import java.time.Duration
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.pow
 
 /**
@@ -37,11 +39,14 @@ class PostboxProcessing(
     private val maxFailures: Int = 3,
     private val maxPollingTime: Duration = Duration.ofSeconds(5),
     private val lease: Duration = Duration.ofSeconds(30),
+    private val shutdownGracePeriod: Duration = Duration.ofSeconds(30),
     private val events: Events = { },
-    private val context: ExecutionContext = DefaultExecutionContext,
+    private val context: ExecutionContext = DefaultExecutionContext(shutdownGracePeriod),
     private val backoffStrategy: BackoffStrategy = ::defaultBackoffStrategy,
     private val successCriteria: (Response) -> Boolean = { it.status.successful }
 ) {
+    private val stopped = AtomicBoolean(false)
+
     private val task = Runnable {
         while (context.isRunning()) {
             val t0 = context.currentTime()
@@ -61,7 +66,11 @@ class PostboxProcessing(
     }
 
     fun stop() {
-        context.stop()
+        if (!stopped.getAndSet(true)) {
+            if (!context.stop()) {
+                events(ShutdownTimedOut(shutdownGracePeriod))
+            }
+        }
     }
 
     fun start() {

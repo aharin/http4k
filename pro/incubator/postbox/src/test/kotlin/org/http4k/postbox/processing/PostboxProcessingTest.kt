@@ -27,6 +27,7 @@ import org.http4k.postbox.processing.ProcessingEvent.RequestMarkedDead
 import org.http4k.postbox.processing.ProcessingEvent.RequestProcessingFailed
 import org.http4k.postbox.processing.ProcessingEvent.RequestProcessingSucceeded
 import org.http4k.postbox.processing.ProcessingEvent.RequestScheduledForRetry
+import org.http4k.postbox.processing.ProcessingEvent.ShutdownTimedOut
 import org.http4k.postbox.storage.inmemory.InMemoryPostbox
 import org.http4k.routing.bind
 import org.http4k.routing.routes
@@ -217,6 +218,74 @@ class PostboxProcessingTest {
             events = { events += it },
             backoffStrategy = { _, _ -> reprocessingDelay })
         processor.processPendingRequests { it.status.successful }
+    }
+
+    @Test
+    fun `stop emits ShutdownTimedOut when in-flight work does not finish within the grace period`() {
+        val requestId = RequestId.of("0")
+        store(requestId, requestForSuccess)
+        val events = mutableListOf<Event>()
+        val grace = ofSeconds(10)
+        val context = SimulatedExecutionContext(timeSource, grace).apply {
+            thread.busyUntil = timeSource() + ofSeconds(60)
+        }
+
+        PostboxProcessing(transactor,
+            testTarget,
+            shutdownGracePeriod = grace,
+            context = context,
+            events = { events += it })
+            .apply { start(); stop() }
+
+        assertThat(events, equalTo(listOf<Event>(ShutdownTimedOut(grace))))
+    }
+
+    @Test
+    fun `stop does not emit ShutdownTimedOut when in-flight work finishes within the grace period`() {
+        val requestId = RequestId.of("0")
+        store(requestId, requestForSuccess)
+        val events = mutableListOf<Event>()
+        val grace = ofSeconds(10)
+        val context = SimulatedExecutionContext(timeSource, grace).apply {
+            thread.busyUntil = timeSource() + ofSeconds(5)
+        }
+
+        PostboxProcessing(transactor,
+            testTarget,
+            shutdownGracePeriod = grace,
+            context = context,
+            events = { events += it })
+            .apply { start(); stop() }
+
+        assertThat(events, equalTo(emptyList<Event>()))
+    }
+
+    @Test
+    fun `stop simulates waiting for in-flight work up to the grace period using the time source`() {
+        val now = timeSource()
+        val grace = ofSeconds(10)
+        val context = SimulatedExecutionContext(timeSource, grace).apply {
+            thread.busyUntil = timeSource() + ofSeconds(60)
+        }
+
+        PostboxProcessing(transactor, testTarget, shutdownGracePeriod = grace, context = context).apply { stop() }
+
+        assertThat(context.finished, equalTo(false))
+        assertThat(timeSource(), equalTo(now + grace))
+    }
+
+    @Test
+    fun `stop simulates waiting only until in-flight work completes when within the grace period`() {
+        val now = timeSource()
+        val grace = ofSeconds(10)
+        val context = SimulatedExecutionContext(timeSource, grace).apply {
+            thread.busyUntil = timeSource() + ofSeconds(5)
+        }
+
+        PostboxProcessing(transactor, testTarget, shutdownGracePeriod = grace, context = context).apply { stop() }
+
+        assertThat(context.finished, equalTo(true))
+        assertThat(timeSource(), equalTo(now + ofSeconds(5)))
     }
 
     private fun checkStatus(requestId: RequestId, processed: RequestProcessingStatus) {

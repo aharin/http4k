@@ -20,6 +20,7 @@ sealed class ProcessingEvent : Event {
         val detail: String
     ) : ProcessingEvent()
     data class PollWait(val duration: Duration) : ProcessingEvent()
+    data class ShutdownTimedOut(val shutdownGracePeriod: Duration) : ProcessingEvent()
 }
 
 enum class RequestProcessingFailureReason {
