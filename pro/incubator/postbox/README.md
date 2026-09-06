@@ -10,8 +10,8 @@ The most common use-case for this mechanism is the implementation of the [Transa
 
 ```kotlin
 dependencies {
-    implementation(platform("org.http4k:http4k-bom:5.46.0.0"))
-    implementation("org.http4k:http4k-connect-transactional-postbox")
+    implementation(platform("org.http4k:http4k-bom:<LATEST_VERSION>"))
+    implementation("org.http4k:http4k-incubator-postbox")
 }
 ```
 
@@ -37,7 +37,7 @@ You then have options to replace the client with a transactional outbox to proce
 
 Before:
 ```kotlin
-val client = SetBaseUriFrom(Uri.of("https://sms-service.external").then(OkHttp())
+val client = SetBaseUriFrom(Uri.of("https://sms-service.external")).then(OkHttp())
 val smsClient = SmsNotificationClient(client)
 ```
 
@@ -51,24 +51,30 @@ val smsClient = SmsNotificationClient(outbox.intercepting(fromHeader("x-message-
 
 The Postbox requires a transactional storage to keep and process requests reliably. For that, we use a `Transactor` to manage the transaction lifecycle.
 
-Here's an example of how to create a `Transactor` for a PostgreSQL database managed with [Exposed](https://jetbrains.github.io/Exposed/home.html):
+The JDBC storage needs its schema to be created before the Postbox is used:
 
 ```kotlin
-val datasource = HikariDataSource(HikariConfig().apply {
-        driverClassName = "org.postgresql.Driver"
-        username = "postgres"
-        password = "mysecretpassword"
-        jdbcUrl = "jdbc:postgresql://localhost:5432/postgres"
-    })
+import org.http4k.postbox.storage.jdbc.JdbcPostboxSchema
+import org.http4k.postbox.storage.jdbc.PostboxTransactor
 
-val transactor = ExposedTransactor(datasource, ::ExposedPostbox)
+val datasource = HikariDataSource(HikariConfig().apply {
+    driverClassName = "org.postgresql.Driver"
+    username = "postgres"
+    password = "mysecretpassword"
+    jdbcUrl = "jdbc:postgresql://localhost:5432/postgres"
+})
+
+JdbcPostboxSchema.create(datasource)
+
+val transactor = PostboxTransactor(datasource)
 ```
+
+Alternatively, `JdbcPostboxSchema.create(datasource, prefix)` can be used to isolate multiple Postboxes within the same database by prefixing their table names.
 
 The currently supported transactors are:
 
 * In-memory - for testing purposes, manages the transaction by using simple locks
-* Exposed - for SQL databases, manages the transaction using Exposed
-* Datasource - for SQL databases, manages the transaction using JDBC DataSource and expects databases to support [Serializable isolation level](https://en.wikipedia.org/wiki/Isolation_(database_systems)#Serializable)
+* JDBC DataSource - for SQL databases, manages the transaction using a JDBC `DataSource`
 
 ### Idempotency
 
@@ -124,12 +130,12 @@ val myRequestHandler: HttpHandler = { request -> // this is the request stored i
 
 val postbox: PostboxTransactor = ...
     
-PostboxProcessing(transactor, myRequestHandler).start()
+PostboxProcessing(postbox, myRequestHandler).start()
 ```
 
 This will start a single background (virtual) thread to process the requests in the Postbox using polling.
 
-It'll do so by periodically processing a small bach of pending requests in a single database transaction. 
+It'll do so by periodically claiming a small batch of pending requests and processing them.
 
 The responses for those requests are stored so they can be consumed or served later.
 
@@ -165,6 +171,7 @@ Alternatively, you can customize this response by providing a custom `PendingRes
 ```kotlin
 val myCustomResult = Response(ACCEPTED).body("Your request is being processed. Please check back later")
 
+val transactor: PostboxTransactor = ...
 val postbox = PostboxHandlers(transactor, myCustomResult)
 ```
 
@@ -175,7 +182,7 @@ The Postbox provides a separate `HttpHandler` to check the status or retrieve th
 Here's an example:
 
 ```kotlin
-val postbox: PostboxTransactor = ...
+val transactor: PostboxTransactor = ...
 val handlers = PostboxHandlers(transactor)
 
 routes("/status/{requestId}" bind GET to handlers.status(fromPath("requestId")))
@@ -204,7 +211,27 @@ routes(
 
 ## Testing
 
+
 ## Developing
+
+The module uses a shared `PostboxContract` suite which is executed against both storage implementations, ensuring the in-memory and JDBC backends behave identically:
+
+* `InMemoryPostboxTest` - runs the contract against the in-memory storage
+* `JdbcPostboxTest` - runs the contract against a PostgreSQL database via JDBC
+
+There are also behavioural tests covering background processing (`PostboxProcessingTest`) and the transactional handler wiring (`TransactionalPostboxTest`).
+
+The JDBC tests require a running PostgreSQL instance. See below for how to start one.
+
+### Running the tests
+
+Run the full module test suite with:
+
+```shell
+./gradlew :http4k-incubator-postbox:test
+```
+
+The PostgreSQL-backed tests are skipped automatically if no database is available.
 
 ### Starting PostgreSQL for testing
 
@@ -212,8 +239,9 @@ routes(
 docker run --name http4k-test-postgres -p 5432:5432 -e POSTGRES_PASSWORD=mysecretpassword -d postgres:17.2
 ```
 
-### Starting MySQL for testing
+### Examples
 
-```shell
-docker run --name http4k-test-mysql -p 3306:3306 -e MYSQL_ROOT_PASSWORD=mysecretpassword -d mysql:9.2
-```
+The `src/test` directory also contains runnable examples that wire up the Postbox end-to-end:
+
+* `ExampleOutbox` - a transactional outbox that sends SMS notifications to a third-party service
+* `ExampleInbox` - a transactional inbox that captures requests and serves their responses after background processing
