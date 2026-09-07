@@ -9,6 +9,7 @@ Given version `A.B.C.D`, breaking changes are to be expected in version number i
 
 ### v6.59.0.0 (uncut)
 - **http4k-***: Upgrade versions & Gradle
+- **http4k-connect-amazon-dynamodb-fake**: A failed `TransactWriteItems` now returns the same `TransactionCanceledException` error as DynamoDB, with a reason for each item.
 - **http4k-connect-amazon-sqs**: [New] `ChangeMessageVisibility`, which returns a received message to the queue early (timeout 0) or extends the time a consumer holds it.
 - **http4k-connect-amazon-sqs-fake**: [New] `ChangeMessageVisibility`. Received messages stay visible in the fake, so the call only checks that the queue exists.
 - **http4k-connect-amazon-xray**: [New module!] AWS X-Ray read APIs, covering `GetTraceSummaries` and `BatchGetTraces`. Segment documents are returned as the raw JSON X-Ray stores; the root-cause structures of a trace summary are not modelled.
