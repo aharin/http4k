@@ -9,6 +9,8 @@ Given version `A.B.C.D`, breaking changes are to be expected in version number i
 
 ### v6.59.0.0 (uncut)
 - **http4k-***: Upgrade versions & Gradle
+- **http4k-connect-amazon-xray**: [New module!] AWS X-Ray read APIs, covering `GetTraceSummaries` and `BatchGetTraces`. Segment documents are returned as the raw JSON X-Ray stores; the root-cause structures of a trace summary are not modelled.
+- **http4k-connect-amazon-xray-fake**: [New module!] AWS X-Ray fake, backed by a `Storage<StoredTrace>`. It evaluates `annotation.<key> = "<value>"` filter expressions and refuses any other, rather than answering with every trace in the window.
 - **http4k-connect-amazon-iot**: [New] `DescribeCertificate`, which reads a certificate's status, owner, mode and validity window from its id.
 - **http4k-connect-amazon-iot-fake**: [New] `DescribeCertificate`, backed by a `Storage<StoredCertificate>`.
 - **http4k-connect-amazon-cognitoidentity**: [New module!] Amazon Cognito Identity (identity pools), supporting `GetId` and `GetCredentialsForIdentity`. This is the federated-credentials service, not the user pools of `http4k-connect-amazon-cognito`.
